@@ -1,5 +1,3 @@
-
-
 # Multi-theme colors via CSS variables
 
 ## Goal
@@ -449,26 +447,43 @@ Do not change `theme.space`, `theme.fontSizes`, etc.
 
 ---
 
-## Testing
+## Technical steps
 
-- Every key in `themes.light` has a resolved value in each theme after merge
-- `themeVar("textMuted")` === `"var(--ck12-text-muted)"`
-- Header dropdown switches themes; migrated SCSS/atoms using `var(--ck12-*)` / `themeVar()` update
+1. Add [`theme.json`](packages/ck12-atoms/Theme/theme.json) under `ck12-atoms/Theme` with semantic token keys and `light` / `dark` / `customTest` color values.
+2. Implement `tokenToKebab()` in [`theme-stylesheet.js`](packages/ck12-atoms/Theme/theme-stylesheet.js) to map camelCase token keys to `--ck12-kebab-case` CSS variable names.
+3. Implement `themeVar(token)` to return `var(--ck12-…)` strings for use in styled-components.
+4. Implement `resolveThemeTokens(themeName)` to merge a theme’s overrides onto `defaultTheme` when keys are missing.
+5. Implement `buildThemeStylesheet()` to generate CSS blocks for `:root` (default theme) and `:root[data-ck12-theme="…"]` (each named theme) setting `--ck12-*` vars.
+6. Implement `ensureThemeStylesheet()` to inject a single `<style id="ck12-theme-modes">` into `document.head` on first call.
+7. Implement `applyThemeName(name)` to set `data-ck12-theme="{name}"` on `document.documentElement` (`<html>`).
+8. Export `themeVar`, `ensureThemeStylesheet`, `applyThemeName`, `getThemeNames`, and `getTokenKeys` from [`exportable.js`](packages/ck12-atoms/exportable.js).
+9. Create `ThemeModeProvider` in [`ck12-universe`](packages/ck12-universe/theme/) that calls `ensureThemeStylesheet()` and `applyThemeName()` on mount using `localStorage.ck12ActiveTheme` or `defaultTheme`.
+10. Read `localStorage.ck12ActiveTheme` synchronously before the first React render to avoid a flash of the wrong theme.
+11. Store active theme in React state and run a `useEffect` that calls `applyThemeName()` and writes `localStorage.ck12ActiveTheme` whenever the theme changes.
+12. Expose `useThemeMode()` returning `{ activeThemeName, setActiveThemeName, themeNames }`.
+13. Wrap [`course-book-app/src/App.jsx`](packages/course-book-app/src/App.jsx) with `ThemeModeProvider` outside the existing atoms `ThemeProvider` (which still handles fonts, space, radii).
+14. Add a temporary theme `<select>` in [`ck12-header`](packages/ck12-header) bound to `setActiveThemeName` with options `light`, `dark`, `customTest`.
+15. Audit color usages and add semantic keys to `theme.json` using the decision framework above.
+16. Replace `PALETTE` imports, hardcoded hex, and `theme.colors.*` (colors only) in core atoms with `themeVar("…")`.
+17. Migrate SCSS/CSS color references from old vars (e.g. `--button-base-color`) to `var(--ck12-…)` as files are touched.
+18. Remove hardcoded color `:root` rules from [`app.css`](packages/course-book-app/css/app.css) once the injected stylesheet owns those values.
+19. Add a Storybook theme toolbar that calls `setActiveThemeName` to preview all themes on atoms stories.
+20. Add unit tests for `buildThemeStylesheet` output, `themeVar()` naming, and `resolveThemeTokens` merge fallback.
 
 ---
 
-## Deferred
+## Lifecycle of `${themeVar("textMuted")}`
 
-- API-driven active theme name
-- Remove dummy dropdown + `customTest`
-- Full migration off deprecated `COLOR` keys
-- Remote `theme.json` from CDN
-- WL themes (`odishaCustomTheme`) — add under `themes` with same keys, different values
+End-to-end flow for one token from JSON to painted pixel, and what happens on theme switch.
 
----
+| Stage | What happens |
+| ----- | ------------ |
+| **1. Define** | `"textMuted": "#71767e"` in `theme.json` → `themes.light`; `"#aab1c2"` in `themes.dark`. |
+| **2. Build** | `tokenToKebab("textMuted")` → `text-muted` → CSS property `--ck12-text-muted`. |
+| **3. Inject** | `ensureThemeStylesheet()` writes both `:root` and `:root[data-ck12-theme="dark"]` rules into `<head>`. |
+| **4. Activate theme** | `applyThemeName("light")` sets `data-ck12-theme="light"` on `<html>`; browser uses default `:root` block. |
+| **5. Component** | Styled rule: `color: ${themeVar("textMuted")};` → compiled CSS: `color: var(--ck12-text-muted);`. |
+| **6. Resolve** | Browser looks up `--ck12-text-muted` on matching `:root` selector → `#71767e` in light. |
+| **7. Switch** | Header calls `setActiveThemeName("dark")` → `data-ck12-theme="dark"` → browser picks dark rule → `#aab1c2` without recompiling styled-components. |
 
-## Risks
-
-- Audit misses a color source → won't respond to theme switch until migrated to `themeVar()` / `var(--ck12-*)`
-- `theme.colors[dynamicKey]` — validate against `getTokenKeys()`
-- Flash on load — sync stylesheet + `applyThemeName` before React render
+**Key point:** `themeVar()` only produces a CSS variable reference at build time; the actual hex lives in the injected stylesheet and changes when `data-ck12-theme` on `<html>` changes.
